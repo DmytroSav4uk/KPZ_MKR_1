@@ -15,6 +15,7 @@ class Program
 
         // image adding
         bookText += "\nimage:https://plus.unsplash.com/premium_photo-1664474619075-644dd191935f?fm=jpg&q=60&w=3000&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MXx8aW1hZ2V8ZW58MHx8MHx8fDA%3D/150x150,page=2,after=5";
+        bookText += "\nimage:https://plus.unsplash.com/premium_photo-1664474619075-644dd191935f?fm=jpg&q=60&w=3000&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MXx8aW1hZ2V8ZW58MHx8MHx8fDA%3D/150x150,page=1,after=5";
 
         string htmlContent = ConvertToPagedHtml(bookText, 70);
         Console.WriteLine(htmlContent);
@@ -61,6 +62,12 @@ class Program
                     }
                 }
             }
+        }
+
+        var styleVisitor = new StyleVisitor(); 
+        foreach (var element in parsedElements)
+        {
+            element.Accept(styleVisitor);  
         }
 
         List<List<IHtmlElement>> pages = new();
@@ -133,6 +140,7 @@ interface IHtmlElement
     string Render();
     void AddEventListener(string eventType, Action handler);
     IEnumerator<IHtmlElement> GetEnumerator();
+    void Accept(IHtmlElementVisitor visitor);  
 }
 
 abstract class HtmlElementBase : IHtmlElement
@@ -145,6 +153,11 @@ abstract class HtmlElementBase : IHtmlElement
         eventListeners[eventType] = handler;
     }
 
+    public void SetStyle(string style)
+    {
+        Style = style;
+    }
+    
     public string Render()
     {
         OnCreated();
@@ -175,6 +188,8 @@ abstract class HtmlElementBase : IHtmlElement
     {
         yield break;
     }
+
+    public virtual void Accept(IHtmlElementVisitor visitor) { }
 }
 
 class DivElement : HtmlElementBase
@@ -209,13 +224,29 @@ class DivElement : HtmlElementBase
         foreach (var child in Children)
             yield return child;
     }
+
+    public override void Accept(IHtmlElementVisitor visitor)
+    {
+        visitor.Visit(this);
+    }
 }
 
 class H1Element : HtmlElementBase
 {
     private string _content;
     public H1Element(string content) => _content = content;
-    protected override void OnStylesApplied() => Style = "font-size: 32px; color: darkblue; margin-top: 20px;";
+
+    public override void Accept(IHtmlElementVisitor visitor)
+    {
+        visitor.Visit(this);
+    }
+
+    protected override void OnStylesApplied()
+    {
+      
+        SetStyle("padding: 10px; border-radius: 10px; background-color: lightblue;");
+    }
+
     protected override string RenderContent() => $"<h1 style=\"{Style}\" class='{ClassList}'>{_content}</h1>";
 }
 
@@ -223,7 +254,12 @@ class H2Element : HtmlElementBase
 {
     private string _content;
     public H2Element(string content) => _content = content;
-    protected override void OnStylesApplied() => Style = "font-size: 24px; color: darkgreen; margin-top: 16px;";
+
+    public override void Accept(IHtmlElementVisitor visitor)
+    {
+        visitor.Visit(this);
+    }
+
     protected override string RenderContent() => $"<h2 style=\"{Style}\" class='{ClassList}'>{_content}</h2>";
 }
 
@@ -231,16 +267,27 @@ class BlockquoteElement : HtmlElementBase
 {
     private string _content;
     public BlockquoteElement(string content) => _content = content;
-    protected override void OnStylesApplied() => Style = "margin-left: 20px; font-style: italic; color: gray;";
-    protected override string RenderContent() => $"<blockquote class='{ClassList}' style=\"{Style}\">{_content}</blockquote>";
+
+    public override void Accept(IHtmlElementVisitor visitor)
+    {
+        visitor.Visit(this);
+    }
+
+    protected override string RenderContent() => $"<blockquote class='{ClassList}'>{_content}</blockquote>";
 }
 
 class ImageElement : HtmlElementBase
 {
     private string _src;
     public ImageElement(string src) => _src = src;
-    protected override void OnStylesApplied() => Style = "max-width:50%; margin:10px 0;";
-    protected override string RenderContent() => $"<img src=\"{_src}\" style=\"{Style}\" class=\"{ClassList}\" />";
+
+    public override void Accept(IHtmlElementVisitor visitor)
+    {
+        visitor.Visit(this);
+    }
+
+    protected override string RenderContent() => $"<img src=\"{_src}\" style=\"width:50%\" class=\"{ClassList}\" />";
+
 }
 
 class HtmlElementFactory
@@ -260,80 +307,29 @@ class HtmlElementFactory
     }
 }
 
-// Command Pattern Interfaces and Classes
 
-interface ICommand
+
+interface IHtmlElementVisitor
 {
-    void Execute();
+    void Visit(H1Element h1);
+    void Visit(H2Element h2);
+    void Visit(BlockquoteElement blockquote);
+    void Visit(ImageElement image);
+    void Visit(DivElement div);
 }
 
-class InsertImageCommand : ICommand
+class StyleVisitor : IHtmlElementVisitor
 {
-    private readonly DivElement _page;
-    private readonly int _afterIndex;
-    private readonly IHtmlElement _element;
-
-    public InsertImageCommand(DivElement page, int afterIndex, IHtmlElement element)
+    public void Visit(H1Element h1)
     {
-        _page = page;
-        _afterIndex = afterIndex;
-        _element = element;
+       
+        h1.SetStyle("padding: 10px; border-radius: 10px; background-color: lightblue;");
     }
 
-    public void Execute()
-    {
-        _page.InsertAfter(_afterIndex, _element);
-    }
-}
-
-class AddPaginationControlsCommand : ICommand
-{
-    private readonly StringBuilder _htmlBuilder;
-    private readonly int _totalPages;
-
-    public AddPaginationControlsCommand(StringBuilder htmlBuilder, int totalPages)
-    {
-        _htmlBuilder = htmlBuilder;
-        _totalPages = totalPages;
-    }
-
-    public void Execute()
-    {
-        _htmlBuilder.AppendLine(@"
-        <div style='margin-top:20px'>
-            <button onclick='prevPage()'>Previous Page</button>
-            <span id='pageInfo'></span>
-            <button onclick='nextPage()'>Next Page</button>
-        </div>
-
-        <script>
-            let currentPage = 0;
-            const totalPages = " + _totalPages + @";
-
-            function showPage(index) {
-                for (let i = 0; i < totalPages; i++) {
-                    document.getElementById('page' + i).style.display = i === index ? 'block' : 'none';
-                }
-                document.getElementById('pageInfo').innerText = `Page: ${index + 1} / ${totalPages}`;
-                currentPage = index;
-            }
-
-            function nextPage() {
-                if (currentPage < totalPages - 1) {
-                    showPage(currentPage + 1);
-                }
-            }
-
-            function prevPage() {
-                if (currentPage > 0) {
-                    showPage(currentPage - 1);
-                }
-            }
-
-            showPage(currentPage);
-        </script>
-        ");
-    }
+    public void Visit(H2Element h2) { }
+    public void Visit(BlockquoteElement blockquote) { }
+    public void Visit(ImageElement image) { }
+    public void Visit(DivElement div) { }
 }
 
 class InsertContext
@@ -358,3 +354,65 @@ class InsertContext
         page.InsertAfter(afterIndex, element);
     }
 }
+
+
+
+interface ICommand
+{
+    void Execute();
+}
+
+class AddPaginationControlsCommand : ICommand
+{
+    private readonly StringBuilder _htmlBuilder;
+    private readonly int _totalPages;
+
+    public AddPaginationControlsCommand(StringBuilder htmlBuilder, int totalPages)
+    {
+        _htmlBuilder = htmlBuilder;
+        _totalPages = totalPages;
+    }
+
+    public void Execute()
+    {
+        _htmlBuilder.AppendLine("<div style='margin-top:20px'>");
+        _htmlBuilder.AppendLine("<button onclick='prevPage()'>Previous</button>");
+        _htmlBuilder.AppendLine("<span id='pageInfo'></span>");
+        _htmlBuilder.AppendLine("<button onclick='nextPage()'>Next</button>");
+        _htmlBuilder.AppendLine("</div>");
+
+     
+        _htmlBuilder.AppendLine(@"
+        <script>
+            let currentPage = 0;
+            const totalPages = " + _totalPages + @";
+
+           
+            function showPage(index) {
+                for (let i = 0; i < totalPages; i++) {
+                    document.getElementById('page' + i).style.display = i === index ? 'block' : 'none';
+                }
+                document.getElementById('pageInfo').innerText = `Page: ${index + 1} / ${totalPages}`;
+                currentPage = index;
+            }
+
+            
+            function nextPage() {
+                if (currentPage < totalPages - 1) {
+                    showPage(currentPage + 1);
+                }
+            }
+
+         
+            function prevPage() {
+                if (currentPage > 0) {
+                    showPage(currentPage - 1);
+                }
+            }
+
+           
+            showPage(currentPage);
+        </script>");
+    }
+}
+
