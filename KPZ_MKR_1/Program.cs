@@ -1,4 +1,10 @@
-﻿using System.Text;
+﻿using System;
+using System.Collections.Generic;
+using System.Text;
+using System.Linq;
+using System.Net.Http;
+using System.Threading.Tasks;
+using System.IO;
 
 class Program
 {
@@ -33,7 +39,6 @@ class Program
         List<IHtmlElement> parsedElements = new();
         List<(int page, int after, IHtmlElement element)> insertInstructions = new();
 
-      
         foreach (var line in lines)
         {
             if (line.StartsWith("image:") && line.Contains(",page="))
@@ -58,14 +63,12 @@ class Program
             }
         }
 
-      
         List<List<IHtmlElement>> pages = new();
         for (int i = 0; i < parsedElements.Count; i += elementsPerPage)
         {
             pages.Add(parsedElements.Skip(i).Take(elementsPerPage).ToList());
         }
 
-       
         string pageStyles = @"
         <style>
             .page {
@@ -107,40 +110,8 @@ class Program
             pagedHtml.AppendLine("</div>");
         }
 
-        pagedHtml.AppendLine(@"
-        <div style='margin-top:20px'>
-            <button onclick='prevPage()'>Previous Page</button>
-            <span id='pageInfo'></span>
-            <button onclick='nextPage()'>Next Page</button>
-        </div>
-
-        <script>
-            let currentPage = 0;
-            const totalPages = " + pages.Count + @";
-
-            function showPage(index) {
-                for (let i = 0; i < totalPages; i++) {
-                    document.getElementById('page' + i).style.display = i === index ? 'block' : 'none';
-                }
-                document.getElementById('pageInfo').innerText = `Page: ${index + 1} / ${totalPages}`;
-                currentPage = index;
-            }
-
-            function nextPage() {
-                if (currentPage < totalPages - 1) {
-                    showPage(currentPage + 1);
-                }
-            }
-
-            function prevPage() {
-                if (currentPage > 0) {
-                    showPage(currentPage - 1);
-                }
-            }
-
-            showPage(currentPage);
-        </script>
-        ");
+        insertContext.AddCommand(new AddPaginationControlsCommand(pagedHtml, pages.Count));
+        insertContext.ExecuteCommands();
 
         return pagedHtml.ToString();
     }
@@ -156,8 +127,6 @@ class Program
         Console.WriteLine("Збережено до output.html");
     }
 }
-
-
 
 interface IHtmlElement
 {
@@ -278,10 +247,7 @@ class HtmlElementFactory
 {
     public static IHtmlElement CreateHtmlElement(string strippedLine, string originalLine)
     {
-        if (originalLine.StartsWith("button:"))
-            return null;
-
-        if (originalLine.StartsWith("image:"))
+        if (originalLine.StartsWith("button:") || originalLine.StartsWith("image:"))
             return null;
 
         if (originalLine.StartsWith(" "))
@@ -294,27 +260,101 @@ class HtmlElementFactory
     }
 }
 
+// Command Pattern Interfaces and Classes
 
-
-interface IInsertState
+interface ICommand
 {
-    void Insert(DivElement page, int afterIndex, IHtmlElement element);
+    void Execute();
 }
 
-class NormalInsertState : IInsertState
+class InsertImageCommand : ICommand
 {
-    public void Insert(DivElement page, int afterIndex, IHtmlElement element)
+    private readonly DivElement _page;
+    private readonly int _afterIndex;
+    private readonly IHtmlElement _element;
+
+    public InsertImageCommand(DivElement page, int afterIndex, IHtmlElement element)
     {
-        page.InsertAfter(afterIndex, element);
+        _page = page;
+        _afterIndex = afterIndex;
+        _element = element;
+    }
+
+    public void Execute()
+    {
+        _page.InsertAfter(_afterIndex, _element);
+    }
+}
+
+class AddPaginationControlsCommand : ICommand
+{
+    private readonly StringBuilder _htmlBuilder;
+    private readonly int _totalPages;
+
+    public AddPaginationControlsCommand(StringBuilder htmlBuilder, int totalPages)
+    {
+        _htmlBuilder = htmlBuilder;
+        _totalPages = totalPages;
+    }
+
+    public void Execute()
+    {
+        _htmlBuilder.AppendLine(@"
+        <div style='margin-top:20px'>
+            <button onclick='prevPage()'>Previous Page</button>
+            <span id='pageInfo'></span>
+            <button onclick='nextPage()'>Next Page</button>
+        </div>
+
+        <script>
+            let currentPage = 0;
+            const totalPages = " + _totalPages + @";
+
+            function showPage(index) {
+                for (let i = 0; i < totalPages; i++) {
+                    document.getElementById('page' + i).style.display = i === index ? 'block' : 'none';
+                }
+                document.getElementById('pageInfo').innerText = `Page: ${index + 1} / ${totalPages}`;
+                currentPage = index;
+            }
+
+            function nextPage() {
+                if (currentPage < totalPages - 1) {
+                    showPage(currentPage + 1);
+                }
+            }
+
+            function prevPage() {
+                if (currentPage > 0) {
+                    showPage(currentPage - 1);
+                }
+            }
+
+            showPage(currentPage);
+        </script>
+        ");
     }
 }
 
 class InsertContext
 {
-    private IInsertState _state = new NormalInsertState();
-    public void SetState(IInsertState state) => _state = state;
+    private readonly List<ICommand> _commands = new List<ICommand>();
+
+    public void AddCommand(ICommand command)
+    {
+        _commands.Add(command);
+    }
+
+    public void ExecuteCommands()
+    {
+        foreach (var command in _commands)
+        {
+            command.Execute();
+        }
+    }
+
     public void InsertElement(DivElement page, int afterIndex, IHtmlElement element)
     {
-        _state.Insert(page, afterIndex, element);
+        page.InsertAfter(afterIndex, element);
     }
 }
