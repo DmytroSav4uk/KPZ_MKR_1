@@ -8,11 +8,9 @@ class Program
         string url = "https://www.gutenberg.org/cache/epub/1513/pg1513.txt";
         string bookText = await DownloadBookTextAsync(url);
 
-        bookText += "\nimage:https://plus.unsplash.com/premium_photo-1664474619075-644dd191935f?fm=jpg&q=60&w=3000";
-        bookText += "\nimage:local-image.png";
         bookText += "\nbutton:Click me!";
 
-        string htmlContent = ConvertToHtml(bookText);
+        string htmlContent = ConvertToPagedHtml(bookText, 70);
         Console.WriteLine(htmlContent);
 
         long memorySize = GetMemorySize(htmlContent);
@@ -29,23 +27,94 @@ class Program
         }
     }
 
-    static string ConvertToHtml(string text)
+    static string ConvertToPagedHtml(string text, int elementsPerPage)
+{
+    List<string> renderedElements = new List<string>();
+    string[] lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+
+    foreach (var line in lines)
     {
-        StringBuilder htmlOutput = new StringBuilder();
-        string[] lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+        string strippedLine = line.Trim();
+        if (string.IsNullOrEmpty(strippedLine))
+            continue;
 
-        foreach (var line in lines)
+        IHtmlElement htmlElement = HtmlElementFactory.CreateHtmlElement(strippedLine, line);
+        if (htmlElement != null)
         {
-            string strippedLine = line.Trim();
-            if (string.IsNullOrEmpty(strippedLine))
-                continue;
-
-            IHtmlElement htmlElement = HtmlElementFactory.CreateHtmlElement(strippedLine, line);
-            htmlOutput.AppendLine(htmlElement.Render());
+            renderedElements.Add(htmlElement.Render());
         }
-
-        return htmlOutput.ToString();
     }
+
+    int totalPages = (int)Math.Ceiling(renderedElements.Count / (double)elementsPerPage);
+    StringBuilder pagedHtml = new StringBuilder();
+
+    // Додаємо стилі для елементів page
+    string pageStyles = @"
+    <style>
+        .page {
+            width: 75%;
+            height: 80vh;
+            page-break-before: always;
+            overflow-y: auto;
+        }
+        .contentText {
+            font-family: Arial, sans-serif;
+            line-height: 1.5;
+        }
+    </style>";
+
+    pagedHtml.Append(pageStyles);  
+
+    for (int pageIndex = 0; pageIndex < totalPages; pageIndex++)
+    {
+        pagedHtml.AppendLine($"<div class='page' id='page{pageIndex}' style='display:{(pageIndex == 0 ? "block" : "none")}'>");
+        int start = pageIndex * elementsPerPage;
+        int end = Math.Min(start + elementsPerPage, renderedElements.Count);
+        for (int i = start; i < end; i++)
+        {
+            pagedHtml.AppendLine(renderedElements[i]);
+        }
+        pagedHtml.AppendLine("</div>");
+    }
+
+    pagedHtml.AppendLine(@"
+<div style='margin-top:20px'>
+    <button onclick='prevPage()'>Previous Page</button>
+    <span id='pageInfo'></span>
+    <button onclick='nextPage()'>Next Page</button>
+</div>
+
+<script>
+    let currentPage = 0;
+    const totalPages = " + totalPages + @";
+
+    function showPage(index) {
+        for (let i = 0; i < totalPages; i++) {
+            document.getElementById('page' + i).style.display = i === index ? 'block' : 'none';
+        }
+        document.getElementById('pageInfo').innerText = `Page: ${index + 1} / ${totalPages}`;
+        currentPage = index;
+    }
+
+    function nextPage() {
+        if (currentPage < totalPages - 1) {
+            showPage(currentPage + 1);
+        }
+    }
+
+    function prevPage() {
+        if (currentPage > 0) {
+            showPage(currentPage - 1);
+        }
+    }
+
+    showPage(currentPage);
+</script>
+");
+
+    return pagedHtml.ToString();
+}
+
 
     static long GetMemorySize(string content)
     {
@@ -54,12 +123,10 @@ class Program
 
     static void SaveToHtmlFile(string html)
     {
-        File.WriteAllText("output.html", $"<html><body>{html}</body></html>");
+        File.WriteAllText("output.html", $"<html><head><meta charset='UTF-8'></head><body style='display:flex;flex-direction:column;align-items:center;'>{html}</body></html>");
         Console.WriteLine("Збережено до output.html");
     }
 }
-
-
 
 interface IHtmlElement
 {
@@ -67,117 +134,138 @@ interface IHtmlElement
     void AddEventListener(string eventType, Action handler);
 }
 
-
-
 abstract class HtmlElementBase : IHtmlElement
 {
-    protected Dictionary<string, Action> eventListeners = new Dictionary<string, Action>();
-
+    protected Dictionary<string, Action> eventListeners = new();
+    protected string Style = "";
+    protected string ClassList = "";
     public virtual void AddEventListener(string eventType, Action handler)
     {
         eventListeners[eventType] = handler;
     }
 
-    public abstract string Render();
+    // 🔷 Template Method
+    public string Render()
+    {
+        OnCreated();
+        OnStylesApplied();
+        OnClassListApplied();
+        string html = RenderContent(); 
+        OnTextRendered();
+        OnInserted();
+
+        return html;
+    }
+
+    // 🔹 Абстрактна частина шаблону — реалізується підкласами
+    protected abstract string RenderContent();
+
+    // 🔹 Хуки життєвого циклу (можна перевизначити в підкласах)
+    protected virtual void OnCreated() => Console.WriteLine($"{GetType().Name}: OnCreated");
+    protected virtual void OnInserted() => Console.WriteLine($"{GetType().Name}: OnInserted");
+    protected virtual void OnRemoved() => Console.WriteLine($"{GetType().Name}: OnRemoved");
+    protected virtual void OnStylesApplied() => Console.WriteLine($"{GetType().Name}: OnStylesApplied");
+    protected virtual void OnClassListApplied() 
+    {
+        ClassList += " contentText"; 
+    }
+
+    protected virtual void OnTextRendered() => Console.WriteLine($"{GetType().Name}: OnTextRendered");
 
     protected void TriggerEvent(string eventType)
     {
         if (eventListeners.TryGetValue(eventType, out var handler))
-        {
             handler.Invoke();
-        }
     }
 }
-
 
 
 class H1Element : HtmlElementBase
 {
     private string _content;
+
     public H1Element(string content) => _content = content;
-    public override string Render() => $"<h1>{_content}</h1>";
+
+    
+    protected override void OnStylesApplied()
+    {
+        Style = "font-size: 32px; color: darkblue; margin-top: 20px;";
+    }
+    
+    protected override string RenderContent()
+    {
+        return $"<h1 style=\"{Style}\" class='{ClassList}'>{_content}</h1>";
+    }
 }
 
 class H2Element : HtmlElementBase
 {
     private string _content;
+
     public H2Element(string content) => _content = content;
-    public override string Render() => $"<h2>{_content}</h2>";
+
+    protected override void OnStylesApplied()
+    {
+        Style = "font-size: 24px; color: darkgreen; margin-top: 16px;";
+    }
+    
+    protected override string RenderContent()
+    {
+        return $"<h2 style=\"{Style}\" class='{ClassList}'>{_content}</h2>"; 
+    }
 }
 
 class BlockquoteElement : HtmlElementBase
 {
     private string _content;
+
     public BlockquoteElement(string content) => _content = content;
-    public override string Render() => $"<blockquote>{_content}</blockquote>";
+
+    protected override void OnStylesApplied()
+    {
+        Style = "margin-left: 20px; font-style: italic; color: gray;";
+    }
+    
+    protected override string RenderContent()
+    {
+        return $"<blockquote class='{ClassList}' style=\"{Style}\">{_content}</blockquote>";  
+    }
 }
 
 class PElement : HtmlElementBase
 {
     private string _content;
+
     public PElement(string content) => _content = content;
-    public override string Render() => $"<p>{_content}</p>";
+
+    protected override void OnStylesApplied()
+    {
+        Style = "font-size: 16px; line-height: 1.5; margin: 10px 0;";
+    }
+    
+    protected override string RenderContent()
+    {
+        return $"<p class='{ClassList}'>{_content}</p>";  
+    }
 }
 
 class ButtonElement : HtmlElementBase
 {
     private string _label;
+
     public ButtonElement(string label) => _label = label;
 
-    public override string Render()
+    protected override void OnStylesApplied()
     {
-        return $"<button onclick=\"alert('Button clicked: {_label}')\">{_label}</button>";
+        Style = "padding: 10px 20px; background-color: #007BFF; color: white; border: none; border-radius: 5px;";
+    }
+    
+    protected override string RenderContent()
+    {
+        return $"<button class='{ClassList}' style=\"{Style}\" onclick=\"alert('Button clicked: {_label}')\">{_label}</button>";  
     }
 }
 
-
-
-class ImageElement : HtmlElementBase
-{
-    private readonly string _href;
-    private readonly IImageLoaderStrategy _strategy;
-
-    public ImageElement(string href, IImageLoaderStrategy strategy)
-    {
-        _href = href;
-        _strategy = strategy;
-    }
-
-    public override string Render()
-    {
-        return _strategy.LoadImage(_href);
-    }
-}
-
-interface IImageLoaderStrategy
-{
-    string LoadImage(string href);
-}
-
-class NetworkImageLoader : IImageLoaderStrategy
-{
-    public string LoadImage(string href)
-    {
-        return $"<img src=\"{href}\" alt=\"Image from web\" />";
-    }
-}
-
-class FileSystemImageLoader : IImageLoaderStrategy
-{
-    public string LoadImage(string href)
-    {
-        try
-        {
-            string base64 = Convert.ToBase64String(File.ReadAllBytes(href));
-            string extension = Path.GetExtension(href).TrimStart('.').ToLower();
-            return $"<img src=\"data:image/{extension};base64,{base64}\" alt=\"Image from file\" />";
-        }
-        catch
-        {
-            return $"<p>Image '{href}' not found or could not be loaded.</p>";
-        }
-    }
-}
 
 
 
@@ -187,21 +275,19 @@ static class HtmlElementFactory
     {
         Console.OutputEncoding = Encoding.UTF8;
 
-        IHtmlElement element;
-
         if (originalLine.StartsWith("image:"))
         {
-            string href = originalLine.Substring("image:".Length).Trim();
-            IImageLoaderStrategy strategy = href.StartsWith("http")
-                ? new NetworkImageLoader()
-                : new FileSystemImageLoader();
-            element = new ImageElement(href, strategy);
+            return null; // Ігноруємо зображення
         }
-        else if (originalLine.StartsWith("button:"))
+
+        IHtmlElement element;
+
+        if (originalLine.StartsWith("button:"))
         {
-            string label = originalLine.Substring("button:".Length).Trim();
-            element = new ButtonElement(label);
-            element.AddEventListener("click", () => Console.WriteLine($"Button '{label}' clicked (C# event triggered)"));
+            return null;
+            // string label = originalLine.Substring("button:".Length).Trim();
+            // element = new ButtonElement(label);
+            // element.AddEventListener("click", () => Console.WriteLine($"Button '{label}' clicked (C# event triggered)"));
         }
         else if (originalLine.StartsWith(" "))
         {
